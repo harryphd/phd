@@ -1,6 +1,6 @@
-# EVA Data Challenge — Challenge 1 (Extreme Value Analysis)
+# EVA Data Challenge - Challenge 1 (Extreme Value Analysis)
 
-This repository contains an R Markdown workflow used for **EVA (Extreme Value Analysis) Data Challenge — Question/Challenge 1**. The approach clusters covariates (by season and meteorological features), fits **GPD tail models** per cluster, and produces **extreme quantile estimates** for the test set using a **mixture-over-clusters** formulation (as described in the Challenge 1 paper).
+This repository contains an R Markdown workflow used for **EVA (Extreme Value Analysis) Data Challenge - Question/Challenge 1**. The approach clusters covariates (by season and meteorological features), fits **GPD tail models** per cluster, and produces **extreme quantile estimates** for the test set using a **mixture-over-clusters** formulation (as described in the Challenge 1 paper).
 
 ## Contents
 
