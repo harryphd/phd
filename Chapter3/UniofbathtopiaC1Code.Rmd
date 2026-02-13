@@ -1,0 +1,1430 @@
+---
+title: "EVA Data Challenge"
+date: "2023-04-04"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Q1
+
+## Strategy
+
+The general method for this question was to cluster the covariates, first sorting into seasons, and then clustering over the remaining dimensions (WindDirection and WindSpeed are converted into velocity components). An EM algorithm is used by mclust for maximum likelihood estimation. Initialisation of EM is performed using the partitions obtained from agglomerative hierarchical clustering. Using the resulting multivariate normal distributions, we are able to catagorise the data and fit a GPD to find the extreme quantile. In order to maximise the number of points in each cluster, we allow points in a cluster if they have a probability of over 0.25 of being in the cluster. We use a bootstrapping method to estimate central 50% confidence bounds. The clustering code and the bootstrapping code is included, as well as GPD analysis for the 10 clusters. It is possible to run the code but it is pretty slow and cluster allocations may vary slightly.
+
+
+
+
+```{r}
+library(mclust)
+library(mvtnorm)
+library(ismev)
+library(ggplot2)
+library(ggpubr)
+library(stats)
+library(corrplot)
+library(reshape2)
+library(dplyr)
+library(evd)
+AmaData <- read.csv('Amaurot.csv')
+summary(AmaData)
+```
+
+```{r}
+AmaData <- AmaData %>% 
+  mutate(WindSpeedx = WindSpeed*cos(WindDirection))
+AmaData <- AmaData %>% 
+  mutate(WindSpeedy = WindSpeed*sin(WindDirection))
+NewAmaData <- subset(AmaData, select = -c(Y,WindSpeed, WindDirection))
+AmaDataS1 <- NewAmaData %>% filter(grepl('S1', Season))
+AmaDataS2 <- NewAmaData %>% filter(grepl('S2', Season))
+AmaDataS1 <- subset(AmaDataS1, select = -c(Season))
+AmaDataS2 <- subset(AmaDataS2, select = -c(Season))
+AmaDataS1_nona <- na.omit(AmaDataS1)
+AmaDataS2_nona <- na.omit(AmaDataS2)
+summary(AmaDataS1_nona)
+summary(AmaDataS2_nona)
+
+
+NewAmaDataYs <- subset(AmaData, select = -c(WindSpeed, WindDirection))
+YsAmaDataS1 <- NewAmaDataYs %>% filter(grepl('S1', Season))
+YsAmaDataS2 <- NewAmaDataYs %>% filter(grepl('S2', Season))
+YsAmaDataS1 <- subset(YsAmaDataS1, select = -c(Season))
+YsAmaDataS2 <- subset(YsAmaDataS2, select = -c(Season))
+YsAmaDataS1_nona <- na.omit(YsAmaDataS1)
+YsAmaDataS2_nona <- na.omit(YsAmaDataS2)
+```
+
+```{r}
+
+loglikeS1 <- rep(0,9)
+for (i in 2:10){
+  num_clusters <- i
+  gmmS1 <- Mclust(AmaDataS1_nona, G = num_clusters)
+  loglikeS1[i-1] <- gmmS1$loglik
+}
+
+plot(seq(2, 10), -loglikeS1, pch = 19, col = "black", xlab = "Number Of Clusters", ylab = "Negative Log Likelihood")
+
+# Add a red line
+lines(seq(2, 10), -loglikeS1, col = "red")
+```
+```{r}
+# Number of repetitions
+num_repeats <- 10
+
+# Initialize a matrix to store log likelihood values
+loglike_matrix <- matrix(0, nrow = 9, ncol = num_repeats)
+
+# Repeat the experiment
+for (rep in 1:num_repeats) {
+  for (i in 2:10) {
+    num_clusters <- i
+    gmmS1 <- Mclust(AmaDataS1_nona, G = num_clusters)
+    loglike_matrix[i - 1, rep] <- -gmmS1$loglik
+  }
+}
+
+# Calculate the average log likelihood values
+avg_loglike <- rowMeans(loglike_matrix)
+
+# Plot black points for the average values
+plot(seq(2, 10), avg_loglike, pch = 19, col = "black", xlab = "Number Of Clusters", ylab = "Average Negative Log Likelihood")
+
+# Add faint blue lines for individual experiments
+for (rep in 1:num_repeats) {
+  lines(seq(2, 10), loglike_matrix[, rep], col = "lightblue", lty = 2)
+}
+
+# Add a red line representing the average
+lines(seq(2, 10), avg_loglike, col = "red")
+
+```
+
+```{r}
+
+loglikeS2 <- rep(0,9)
+for (i in 2:10){
+  num_clusters <- i
+  gmmS2 <- Mclust(AmaDataS2_nona, G = num_clusters)
+  loglikeS2[i-1] <- gmmS2$loglik
+}
+
+plot(seq(2, 10), loglikeS2)
+```
+
+```{r}
+#lets choose 5
+num_clusters <- 5
+gmmS1 <- Mclust(AmaDataS1_nona, G = num_clusters)
+```
+
+```{r}
+#lets choose 5
+num_clusters <- 5
+gmmS2 <- Mclust(AmaDataS2_nona, G = num_clusters)
+```
+
+
+```{r}
+S1clustparams <- gmmS1$parameters
+alocsS1 <- gmmS1$z
+num_points_S1 <- 9264
+
+mixedprobsS1 <- rep(0,num_points_S1)
+
+for (i in 1:num_points_S1){
+  if (sum(alocsS1[i,]>0.25) >= 2){
+    mixedprobsS1[i] <- 1
+  }
+  else{
+    mixedprobsS1[i] <- 0
+  }
+}
+
+```
+
+```{r}
+S2clustparams <- gmmS2$parameters
+alocsS2 <- gmmS2$z
+num_points_S2 <- 9281
+
+mixedprobsS2 <- rep(0,num_points_S2)
+
+for (i in 1:num_points_S2){
+  if (sum(alocsS2[i,]>0.25) >= 2){
+    mixedprobsS2[i] <- 1
+  }
+  else{
+    mixedprobsS2[i] <- 0
+  }
+}
+
+```
+
+
+```{r}
+cluster_alocsS1 <- list(
+  clus1 = list(),
+  clus2 = list(),
+  clus3 = list(),
+  clus4 = list(),
+  clus5 = list()
+)
+
+for (i in 1:num_points_S1){
+  for (j in 1:num_clusters){
+    if (alocsS1[i,j]>0.25){
+      cluster_alocsS1[[j]]<-append(cluster_alocsS1[[j]], i)
+    }
+  }
+}
+sum(mixedprobsS1)
+```
+
+```{r}
+cluster_alocsS2 <- list(
+  clus12 = list(),
+  clus22 = list(),
+  clus32 = list(),
+  clus42 = list(),
+  clus52 = list()
+)
+
+for (i in 1:num_points_S2){
+  for (j in 1:num_clusters){
+    if (alocsS2[i,j]>0.25){
+      cluster_alocsS2[[j]]<-append(cluster_alocsS2[[j]], i)
+    }
+  }
+}
+sum(mixedprobsS2)
+```
+
+
+
+
+```{r}
+cluster1_alocsS1 <- unlist(cluster_alocsS1$clus1, recursive = FALSE)
+cluster2_alocsS1 <- unlist(cluster_alocsS1$clus2, recursive = FALSE)
+cluster3_alocsS1 <- unlist(cluster_alocsS1$clus3, recursive = FALSE)
+cluster4_alocsS1 <- unlist(cluster_alocsS1$clus4, recursive = FALSE)
+cluster5_alocsS1 <- unlist(cluster_alocsS1$clus5, recursive = FALSE)
+cluster1_alocsS2 <- unlist(cluster_alocsS2$clus12, recursive = FALSE)
+cluster2_alocsS2 <- unlist(cluster_alocsS2$clus22, recursive = FALSE)
+cluster3_alocsS2 <- unlist(cluster_alocsS2$clus32, recursive = FALSE)
+cluster4_alocsS2 <- unlist(cluster_alocsS2$clus42, recursive = FALSE)
+cluster5_alocsS2 <- unlist(cluster_alocsS2$clus52, recursive = FALSE)
+```
+
+
+```{r}
+AmaTestData <- read.csv('AmaurotTestSet.csv')
+AmaTestData <- AmaTestData %>% 
+  mutate(WindSpeedx = WindSpeed*cos(WindDirection))
+AmaTestData <- AmaTestData %>% 
+  mutate(WindSpeedy = WindSpeed*sin(WindDirection))
+NewAmaTestData <- subset(AmaTestData, select = -c(WindSpeed, WindDirection))
+
+clusts <- data.frame(Season=character(),
+                      Allocation=numeric(),
+                      Probability=numeric())
+
+for (i in 1:length(AmaTestData[,1])){
+  vec1 <- NewAmaTestData[i,]
+  if(vec1[5]== 'S1'){
+    vec1 <- vec1[-5]
+    densities <- rep(0,5)
+    for (j in 1:5){
+      densities[j] <- dmvnorm(vec1, mean = S1clustparams$mean[,j], sigma = S1clustparams$variance$sigma[,,j])
+    }
+    clust_probs <- densities/sum(densities)
+    allocation <- which.max(clust_probs)
+    probability <- clust_probs[allocation]
+    row1 <- c('S1', allocation, probability)
+    clusts <- rbind(clusts, row1)
+  }
+  if(vec1[5]== 'S2'){
+    vec1 <- vec1[-5]
+    densities <- rep(0,5)
+    for (j in 1:5){
+      densities[j] <- dmvnorm(vec1, mean = S2clustparams$mean[,j], sigma = S2clustparams$variance$sigma[,,j])
+    }
+    clust_probs <- densities/sum(densities)
+    allocation <- which.max(clust_probs)
+    probability <- clust_probs[allocation]
+    row1 <- c('S2', allocation, probability)
+    clusts <- rbind(clusts, row1)
+  }
+}
+
+colnames(clusts) <- c("Season", "Allocation", "Probability")
+
+clusts
+```
+
+
+```{r}
+### quantile bootstrap stuff
+jack_boot = function(data, u_val){
+  
+  DataFit <- gpd.fit(data, u_val, show=FALSE)
+
+  sca <- DataFit$mle[1]
+  sha <- DataFit$mle[2]
+  
+  quant_all_data <- qgpd(0.9999, loc=u_val, scale = sca, shape = sha)
+  
+  quantiles <- rep(0)
+  for (i in 1:length(data)){
+    data_to_fit <- data[-i]
+    for (j in 1:length(data_to_fit)){
+      if (j >= i){
+        data_to_fit2 <- data_to_fit[-j]
+        DataFit <- gpd.fit(data_to_fit2, u_val, show=FALSE)
+
+        sca <- DataFit$mle[1]
+        sha <- DataFit$mle[2]
+  
+        quantiles[i] <- qgpd(0.9999, loc=u_val, scale = sca, shape = sha)
+        
+      }
+    }
+  }
+  vals <- quantile(quantiles, probs = c(0.25, 0.75))
+  return(c(quant_all_data, quant_all_data-as.numeric(vals[1]), as.numeric(vals[2])-quant_all_data))
+}
+
+```
+
+
+### S1 cluster 1
+
+
+```{r}
+
+GPD_S1_1_Data <- YsAmaDataS1_nona[cluster1_alocsS1,'Y']
+
+hist(GPD_S1_1_Data)
+mrl.plot(GPD_S1_1_Data)
+
+u_0 <- 120
+
+
+
+gpd.fit(GPD_S1_1_Data, u_0)
+
+uvec = seq(from = 80, to = 130, by = 5)
+uvec
+
+ModScal <- vector(length = length(uvec))
+Shape <- vector(length = length(uvec))
+
+ModScalErr <- vector(length = length(uvec))
+ShapeErr <- vector(length = length(uvec))
+
+for(i in 1:length(uvec)){
+  GPD_S1_1_Datafit <- gpd.fit(GPD_S1_1_Data, uvec[i])
+  
+  ModScal[i] <- GPD_S1_1_Datafit$mle[1]
+  Shape[i] <- GPD_S1_1_Datafit$mle[2]
+  
+  ModScalErr[i] <- GPD_S1_1_Datafit$se[1]
+  ShapeErr[i] <- GPD_S1_1_Datafit$se[2]
+}
+
+
+df <- data.frame(uvec, ModScal, ModScalErr, Shape, ShapeErr)
+
+p<- ggplot(df, aes(x=uvec, y=ModScal)) + 
+  geom_line() +
+  geom_point()+
+  geom_errorbar(aes(ymin=ModScal-ModScalErr, ymax=ModScal+ModScalErr), width=.4)
+p<-p+labs(title="Parameter Estimate of Modified Scale", x="Threshold", y = "Modified Scale")
+
+
+p2<- ggplot(df, aes(x=uvec, y=Shape)) + 
+  geom_line() +
+  geom_point()+
+  geom_errorbar(aes(ymin=Shape-ShapeErr, ymax=Shape+ShapeErr), width=.4)
+p2<-p2+labs(title="Parameter Estimate of Shape", x="Threshold", y = "Shape")
+
+ggarrange(p, p2, nrow = 2, labels = c("A", "B")) 
+```
+
+
+```{r}
+
+u_0 <- 100
+
+ExtremeValues <- GPD_S1_1_Data[GPD_S1_1_Data>u_0]
+
+df[df$ID == "a", ]
+
+FinalGPD_S1_1_DataFit <- gpd.fit(GPD_S1_1_Data, u_0)
+
+sca <- FinalGPD_S1_1_DataFit$mle[1]
+sha <- FinalGPD_S1_1_DataFit$mle[2]
+
+
+Initial_Cov <- FinalGPD_S1_1_DataFit$cov
+
+
+CI_max <- sha + 1.96*sqrt(Initial_Cov[2,2])
+CI_min <- sha - 1.96*sqrt(Initial_Cov[2,2])
+
+```
+
+```{r}
+gpd_dens = function(x, xi, sig){
+  return(1/sig*(1+xi*x/sig)^(-1/xi-1))
+}
+gpd_x = c(0:200)/10
+plot(gpd_x,gpd_dens(gpd_x, sha, sca))
+
+gpd.diag(FinalGPD_S1_1_DataFit)
+
+```
+
+
+### Bootstrap
+
+
+```{r}
+
+quants <- jack_boot(ExtremeValues, u_0)
+clust1_s1quant <- quants[1]
+clust1_s1lowquant <- quants[2]
+clust1_s1highquant <- quants[3]
+
+```
+
+
+
+### S1 cluster 2
+
+
+```{r}
+
+GPD_S1_2_Data <- YsAmaDataS1_nona[cluster2_alocsS1,'Y']
+hist(GPD_S1_2_Data)
+mrl.plot(GPD_S1_2_Data)
+
+u_0 <- 120
+
+
+
+gpd.fit(GPD_S1_2_Data, u_0)
+
+uvec = seq(from = 80, to = 130, by = 5)
+uvec
+
+ModScal <- vector(length = length(uvec))
+Shape <- vector(length = length(uvec))
+
+ModScalErr <- vector(length = length(uvec))
+ShapeErr <- vector(length = length(uvec))
+
+for(i in 1:length(uvec)){
+  GPD_S1_2_Datafit <- gpd.fit(GPD_S1_2_Data, uvec[i])
+  
+  ModScal[i] <- GPD_S1_2_Datafit$mle[1]
+  Shape[i] <- GPD_S1_2_Datafit$mle[2]
+  
+  ModScalErr[i] <- GPD_S1_2_Datafit$se[1]
+  ShapeErr[i] <- GPD_S1_2_Datafit$se[2]
+}
+
+
+df <- data.frame(uvec, ModScal, ModScalErr, Shape, ShapeErr)
+
+p<- ggplot(df, aes(x=uvec, y=ModScal)) + 
+  geom_line() +
+  geom_point()+
+  geom_errorbar(aes(ymin=ModScal-ModScalErr, ymax=ModScal+ModScalErr), width=.4)
+p<-p+labs(title="Parameter Estimate of Modified Scale", x="Threshold", y = "Modified Scale")
+
+
+p2<- ggplot(df, aes(x=uvec, y=Shape)) + 
+  geom_line() +
+  geom_point()+
+  geom_errorbar(aes(ymin=Shape-ShapeErr, ymax=Shape+ShapeErr), width=.4)
+p2<-p2+labs(title="Parameter Estimate of Shape", x="Threshold", y = "Shape")
+
+ggarrange(p, p2, nrow = 2, labels = c("A", "B")) 
+```
+
+
+```{r}
+
+u_0 <- 95
+
+ExtremeValues <- GPD_S1_2_Data[GPD_S1_2_Data>u_0]
+ExtremeValues
+
+df[df$ID == "a", ]
+
+FinalGPD_S1_2_DataFit <- gpd.fit(GPD_S1_2_Data, u_0)
+
+sca <- FinalGPD_S1_2_DataFit$mle[1]
+sha <- FinalGPD_S1_2_DataFit$mle[2]
+
+
+
+Initial_Cov <- FinalGPD_S1_2_DataFit$cov
+
+
+CI_max <- sha + 1.96*sqrt(Initial_Cov[2,2])
+CI_min <- sha - 1.96*sqrt(Initial_Cov[2,2])
+
+```
+
+```{r}
+gpd_dens = function(x, xi, sig){
+  return(1/sig*(1+xi*x/sig)^(-1/xi-1))
+}
+gpd_x = c(0:200)/10
+
+gpd.diag(FinalGPD_S1_2_DataFit)
+
+```
+
+```{r}
+
+quants <- jack_boot(ExtremeValues, u_0)
+clust2_s1quant <- quants[1]
+clust2_s1lowquant <- quants[2]
+clust2_s1highquant <- quants[3]
+
+```
+
+
+### S1 cluster 3
+
+
+```{r}
+
+GPD_S1_3_Data <- YsAmaDataS1_nona[cluster3_alocsS1,'Y']
+mrl.plot(GPD_S1_3_Data)
+
+u_0 <- 120
+
+
+
+gpd.fit(GPD_S1_3_Data, u_0)
+
+uvec = seq(from = 80, to = 130, by = 5)
+uvec
+
+ModScal <- vector(length = length(uvec))
+Shape <- vector(length = length(uvec))
+
+ModScalErr <- vector(length = length(uvec))
+ShapeErr <- vector(length = length(uvec))
+
+for(i in 1:length(uvec)){
+  GPD_S1_3_Datafit <- gpd.fit(GPD_S1_3_Data, uvec[i])
+  
+  ModScal[i] <- GPD_S1_3_Datafit$mle[1]
+  Shape[i] <- GPD_S1_3_Datafit$mle[2]
+  
+  ModScalErr[i] <- GPD_S1_3_Datafit$se[1]
+  ShapeErr[i] <- GPD_S1_3_Datafit$se[2]
+}
+
+
+df <- data.frame(uvec, ModScal, ModScalErr, Shape, ShapeErr)
+
+p<- ggplot(df, aes(x=uvec, y=ModScal)) + 
+  geom_line() +
+  geom_point()+
+  geom_errorbar(aes(ymin=ModScal-ModScalErr, ymax=ModScal+ModScalErr), width=.4)
+p<-p+labs(title="Parameter Estimate of Modified Scale", x="Threshold", y = "Modified Scale")
+
+
+p2<- ggplot(df, aes(x=uvec, y=Shape)) + 
+  geom_line() +
+  geom_point()+
+  geom_errorbar(aes(ymin=Shape-ShapeErr, ymax=Shape+ShapeErr), width=.4)
+p2<-p2+labs(title="Parameter Estimate of Shape", x="Threshold", y = "Shape")
+
+ggarrange(p, p2, nrow = 2, labels = c("A", "B")) 
+```
+
+
+```{r}
+
+u_0 <- 100
+
+ExtremeValues <- GPD_S1_3_Data[GPD_S1_3_Data>u_0]
+
+df[df$ID == "a", ]
+
+FinalGPD_S1_3_DataFit <- gpd.fit(GPD_S1_3_Data, u_0)
+
+sca <- FinalGPD_S1_3_DataFit$mle[1]
+sha <- FinalGPD_S1_3_DataFit$mle[2]
+
+
+Initial_Cov <- FinalGPD_S1_3_DataFit$cov
+
+
+CI_max <- sha + 1.96*sqrt(Initial_Cov[2,2])
+CI_min <- sha - 1.96*sqrt(Initial_Cov[2,2])
+
+```
+
+```{r}
+gpd_dens = function(x, xi, sig){
+  return(1/sig*(1+xi*x/sig)^(-1/xi-1))
+}
+gpd_x = c(0:200)/10
+plot(gpd_x,gpd_dens(gpd_x, sha, sca))
+
+gpd.diag(FinalGPD_S1_3_DataFit)
+
+```
+
+```{r}
+
+quants <- jack_boot(ExtremeValues, u_0)
+clust3_s1quant <- quants[1]
+clust3_s1lowquant <- quants[2]
+clust3_s1highquant <- quants[3]
+
+```
+
+
+
+### S1 cluster 4
+
+
+```{r}
+
+GPD_S1_4_Data <- YsAmaDataS1_nona[cluster4_alocsS1,'Y']
+mrl.plot(GPD_S1_4_Data)
+
+u_0 <- 120
+
+
+
+gpd.fit(GPD_S1_4_Data, u_0)
+
+uvec = seq(from = 80, to = 120, by = 5)
+uvec
+
+ModScal <- vector(length = length(uvec))
+Shape <- vector(length = length(uvec))
+
+ModScalErr <- vector(length = length(uvec))
+ShapeErr <- vector(length = length(uvec))
+
+for(i in 1:length(uvec)){
+  GPD_S1_4_Datafit <- gpd.fit(GPD_S1_4_Data, uvec[i])
+  
+  ModScal[i] <- GPD_S1_4_Datafit$mle[1]
+  Shape[i] <- GPD_S1_4_Datafit$mle[2]
+  
+  ModScalErr[i] <- GPD_S1_4_Datafit$se[1]
+  ShapeErr[i] <- GPD_S1_4_Datafit$se[2]
+}
+
+
+df <- data.frame(uvec, ModScal, ModScalErr, Shape, ShapeErr)
+
+p<- ggplot(df, aes(x=uvec, y=ModScal)) + 
+  geom_line() +
+  geom_point()+
+  geom_errorbar(aes(ymin=ModScal-ModScalErr, ymax=ModScal+ModScalErr), width=.4)
+p<-p+labs(title="Parameter Estimate of Modified Scale", x="Threshold", y = "Modified Scale")
+
+
+p2<- ggplot(df, aes(x=uvec, y=Shape)) + 
+  geom_line() +
+  geom_point()+
+  geom_errorbar(aes(ymin=Shape-ShapeErr, ymax=Shape+ShapeErr), width=.4)
+p2<-p2+labs(title="Parameter Estimate of Shape", x="Threshold", y = "Shape")
+
+ggarrange(p, p2, nrow = 2, labels = c("A", "B")) 
+```
+
+
+```{r}
+
+u_0 <- 100
+
+ExtremeValues <- GPD_S1_4_Data[GPD_S1_4_Data>u_0]
+
+
+FinalGPD_S1_4_DataFit <- gpd.fit(GPD_S1_4_Data, u_0)
+
+sca <- FinalGPD_S1_4_DataFit$mle[1]
+sha <- FinalGPD_S1_4_DataFit$mle[2]
+
+
+Initial_Cov <- FinalGPD_S1_4_DataFit$cov
+
+
+CI_max <- sha + 1.96*sqrt(Initial_Cov[2,2])
+CI_min <- sha - 1.96*sqrt(Initial_Cov[2,2])
+
+```
+
+```{r}
+gpd_dens = function(x, xi, sig){
+  return(1/sig*(1+xi*x/sig)^(-1/xi-1))
+}
+gpd_x = c(0:200)/10
+plot(gpd_x,gpd_dens(gpd_x, sha, sca))
+
+gpd.diag(FinalGPD_S1_4_DataFit)
+
+```
+
+```{r}
+
+quants <- jack_boot(ExtremeValues, u_0)
+clust4_s1quant <- quants[1]
+clust4_s1lowquant <- quants[2]
+clust4_s1highquant <- quants[3]
+
+```
+
+
+
+### S1 cluster 5
+
+
+```{r}
+
+GPD_S1_5_Data <- YsAmaDataS1_nona[cluster5_alocsS1,'Y']
+mrl.plot(GPD_S1_5_Data)
+
+u_0 <- 120
+
+
+
+gpd.fit(GPD_S1_5_Data, u_0)
+
+uvec = seq(from = 80, to = 130, by = 5)
+uvec
+
+ModScal <- vector(length = length(uvec))
+Shape <- vector(length = length(uvec))
+
+ModScalErr <- vector(length = length(uvec))
+ShapeErr <- vector(length = length(uvec))
+
+for(i in 1:length(uvec)){
+  GPD_S1_5_Datafit <- gpd.fit(GPD_S1_5_Data, uvec[i])
+  
+  ModScal[i] <- GPD_S1_5_Datafit$mle[1]
+  Shape[i] <- GPD_S1_5_Datafit$mle[2]
+  
+  ModScalErr[i] <- GPD_S1_5_Datafit$se[1]
+  ShapeErr[i] <- GPD_S1_5_Datafit$se[2]
+}
+
+
+df <- data.frame(uvec, ModScal, ModScalErr, Shape, ShapeErr)
+
+p<- ggplot(df, aes(x=uvec, y=ModScal)) + 
+  geom_line() +
+  geom_point()+
+  geom_errorbar(aes(ymin=ModScal-ModScalErr, ymax=ModScal+ModScalErr), width=.4)
+p<-p+labs(title="Parameter Estimate of Modified Scale", x="Threshold", y = "Modified Scale")
+
+
+p2<- ggplot(df, aes(x=uvec, y=Shape)) + 
+  geom_line() +
+  geom_point()+
+  geom_errorbar(aes(ymin=Shape-ShapeErr, ymax=Shape+ShapeErr), width=.4)
+p2<-p2+labs(title="Parameter Estimate of Shape", x="Threshold", y = "Shape")
+
+ggarrange(p, p2, nrow = 2, labels = c("A", "B")) 
+```
+
+
+```{r}
+
+u_0 <- 95
+
+ExtremeValues <- GPD_S1_5_Data[GPD_S1_5_Data>u_0]
+
+df[df$ID == "a", ]
+
+FinalGPD_S1_5_DataFit <- gpd.fit(GPD_S1_5_Data, u_0)
+
+sca <- FinalGPD_S1_5_DataFit$mle[1]
+sha <- FinalGPD_S1_5_DataFit$mle[2]
+
+
+Initial_Cov <- FinalGPD_S1_5_DataFit$cov
+
+
+CI_max <- sha + 1.96*sqrt(Initial_Cov[2,2])
+CI_min <- sha - 1.96*sqrt(Initial_Cov[2,2])
+
+```
+
+```{r}
+gpd_dens = function(x, xi, sig){
+  return(1/sig*(1+xi*x/sig)^(-1/xi-1))
+}
+gpd_x = c(0:200)/10
+plot(gpd_x,gpd_dens(gpd_x, sha, sca))
+gpd.diag(FinalGPD_S1_5_DataFit)
+```
+
+```{r}
+
+quants <- jack_boot(ExtremeValues, u_0)
+clust5_s1quant <- quants[1]
+clust5_s1lowquant <- quants[2]
+clust5_s1highquant <- quants[3]
+
+```
+
+
+### Store vals
+
+```{r}
+clust_quants_S1 <- c(clust1_s1quant,clust2_s1quant,clust3_s1quant,clust4_s1quant,clust5_s1quant)
+clust_quants_S1low <- c(clust1_s1lowquant,clust2_s1lowquant,clust3_s1lowquant,clust4_s1lowquant,clust5_s1lowquant)
+clust_quants_S1high <- c(clust1_s1highquant,clust2_s1highquant,clust3_s1highquant,clust4_s1highquant,clust5_s1highquant)
+```
+
+
+
+### S2 cluster 1
+
+
+```{r}
+
+GPD_S2_1_Data <- YsAmaDataS2_nona[cluster1_alocsS2,'Y']
+
+hist(GPD_S2_1_Data)
+
+mrl.plot(GPD_S2_1_Data)
+
+
+u_0 <- 120
+
+
+gpd.fit(GPD_S2_1_Data, u_0)
+
+uvec = seq(from = 80, to = 130, by = 5)
+uvec
+
+ModScal <- vector(length = length(uvec))
+Shape <- vector(length = length(uvec))
+
+ModScalErr <- vector(length = length(uvec))
+ShapeErr <- vector(length = length(uvec))
+
+for(i in 1:length(uvec)){
+  GPD_S2_1_Datafit <- gpd.fit(GPD_S2_1_Data, uvec[i])
+  
+  ModScal[i] <- GPD_S2_1_Datafit$mle[1]
+  Shape[i] <- GPD_S2_1_Datafit$mle[2]
+  
+  ModScalErr[i] <- GPD_S2_1_Datafit$se[1]
+  ShapeErr[i] <- GPD_S2_1_Datafit$se[2]
+}
+
+
+df <- data.frame(uvec, ModScal, ModScalErr, Shape, ShapeErr)
+
+p<- ggplot(df, aes(x=uvec, y=ModScal)) + 
+  geom_line() +
+  geom_point()+
+  geom_errorbar(aes(ymin=ModScal-ModScalErr, ymax=ModScal+ModScalErr), width=.4)
+p<-p+labs(title="Parameter Estimate of Modified Scale", x="Threshold", y = "Modified Scale")
+
+
+p2<- ggplot(df, aes(x=uvec, y=Shape)) + 
+  geom_line() +
+  geom_point()+
+  geom_errorbar(aes(ymin=Shape-ShapeErr, ymax=Shape+ShapeErr), width=.4)
+p2<-p2+labs(title="Parameter Estimate of Shape", x="Threshold", y = "Shape")
+
+ggarrange(p, p2, nrow = 2, labels = c("A", "B")) 
+```
+
+
+```{r}
+
+u_0 <- 100
+
+ExtremeValues <- GPD_S2_1_Data[GPD_S2_1_Data>u_0]
+
+df[df$ID == "a", ]
+
+FinalGPD_S2_1_DataFit <- gpd.fit(GPD_S2_1_Data, u_0)
+
+sca <- FinalGPD_S2_1_DataFit$mle[1]
+sha <- FinalGPD_S2_1_DataFit$mle[2]
+
+
+Initial_Cov <- FinalGPD_S2_1_DataFit$cov
+
+
+CI_max <- sha + 1.96*sqrt(Initial_Cov[2,2])
+CI_min <- sha - 1.96*sqrt(Initial_Cov[2,2])
+
+```
+
+```{r}
+gpd_dens = function(x, xi, sig){
+  return(1/sig*(1+xi*x/sig)^(-1/xi-1))
+}
+gpd_x = c(0:200)/10
+plot(gpd_x,gpd_dens(gpd_x, sha, sca))
+
+gpd.diag(FinalGPD_S2_1_DataFit)
+
+```
+
+
+### Bootstrap Stuff
+
+
+```{r}
+
+quants <- jack_boot(ExtremeValues, u_0)
+clust1_s2quant <- quants[1]
+clust1_s2lowquant <- quants[2]
+clust1_s2highquant <- quants[3]
+
+```
+
+
+
+
+
+
+
+### S2 cluster 2
+
+
+```{r}
+
+GPD_S2_2_Data <- YsAmaDataS2_nona[cluster2_alocsS2,'Y']
+hist(GPD_S2_2_Data)
+
+mrl.plot(GPD_S2_2_Data)
+
+u_0 <- 120
+
+
+
+gpd.fit(GPD_S2_2_Data, u_0)
+
+uvec = seq(from = 80, to = 130, by = 5)
+uvec
+
+ModScal <- vector(length = length(uvec))
+Shape <- vector(length = length(uvec))
+
+ModScalErr <- vector(length = length(uvec))
+ShapeErr <- vector(length = length(uvec))
+
+for(i in 1:length(uvec)){
+  GPD_S2_2_Datafit <- gpd.fit(GPD_S2_2_Data, uvec[i])
+  
+  ModScal[i] <- GPD_S2_2_Datafit$mle[1]
+  Shape[i] <- GPD_S2_2_Datafit$mle[2]
+  
+  ModScalErr[i] <- GPD_S2_2_Datafit$se[1]
+  ShapeErr[i] <- GPD_S2_2_Datafit$se[2]
+}
+
+
+df <- data.frame(uvec, ModScal, ModScalErr, Shape, ShapeErr)
+
+p<- ggplot(df, aes(x=uvec, y=ModScal)) + 
+  geom_line() +
+  geom_point()+
+  geom_errorbar(aes(ymin=ModScal-ModScalErr, ymax=ModScal+ModScalErr), width=.4)
+p<-p+labs(title="Parameter Estimate of Modified Scale", x="Threshold", y = "Modified Scale")
+
+
+p2<- ggplot(df, aes(x=uvec, y=Shape)) + 
+  geom_line() +
+  geom_point()+
+  geom_errorbar(aes(ymin=Shape-ShapeErr, ymax=Shape+ShapeErr), width=.4)
+p2<-p2+labs(title="Parameter Estimate of Shape", x="Threshold", y = "Shape")
+
+ggarrange(p, p2, nrow = 2, labels = c("A", "B")) 
+```
+
+
+```{r}
+
+u_0 <- 100
+
+ExtremeValues <- GPD_S2_2_Data[GPD_S2_2_Data>u_0]
+
+df[df$ID == "a", ]
+
+FinalGPD_S2_2_DataFit <- gpd.fit(GPD_S2_2_Data, u_0)
+
+sca <- FinalGPD_S2_2_DataFit$mle[1]
+sha <- FinalGPD_S2_2_DataFit$mle[2]
+
+
+
+Initial_Cov <- FinalGPD_S2_2_DataFit$cov
+
+
+CI_max <- sha + 1.96*sqrt(Initial_Cov[2,2])
+CI_min <- sha - 1.96*sqrt(Initial_Cov[2,2])
+
+```
+
+```{r}
+gpd_dens = function(x, xi, sig){
+  return(1/sig*(1+xi*x/sig)^(-1/xi-1))
+}
+gpd_x = c(0:200)/10
+plot(gpd_x,gpd_dens(gpd_x, sha, sca))
+
+gpd.diag(FinalGPD_S2_2_DataFit)
+
+```
+
+```{r}
+
+quants <- jack_boot(ExtremeValues, u_0)
+clust2_s2quant <- quants[1]
+clust2_s2lowquant <- quants[2]
+clust2_s2highquant <- quants[3]
+
+```
+
+
+### S2 cluster 3
+
+
+```{r}
+
+GPD_S2_3_Data <- YsAmaDataS2_nona[cluster3_alocsS2,'Y']
+
+mrl.plot(GPD_S2_3_Data)
+
+
+u_0 <- 110
+
+
+
+gpd.fit(GPD_S2_3_Data, u_0)
+
+uvec = seq(from = 80, to = 110, by = 5)
+uvec
+
+ModScal <- vector(length = length(uvec))
+Shape <- vector(length = length(uvec))
+
+ModScalErr <- vector(length = length(uvec))
+ShapeErr <- vector(length = length(uvec))
+
+for(i in 1:length(uvec)){
+  GPD_S2_3_Datafit <- gpd.fit(GPD_S2_3_Data, uvec[i])
+  
+  ModScal[i] <- GPD_S2_3_Datafit$mle[1]
+  Shape[i] <- GPD_S2_3_Datafit$mle[2]
+  
+  ModScalErr[i] <- GPD_S2_3_Datafit$se[1]
+  ShapeErr[i] <- GPD_S2_3_Datafit$se[2]
+}
+
+
+df <- data.frame(uvec, ModScal, ModScalErr, Shape, ShapeErr)
+
+p<- ggplot(df, aes(x=uvec, y=ModScal)) + 
+  geom_line() +
+  geom_point()+
+  geom_errorbar(aes(ymin=ModScal-ModScalErr, ymax=ModScal+ModScalErr), width=.4)
+p<-p+labs(title="Parameter Estimate of Modified Scale", x="Threshold", y = "Modified Scale")
+
+
+p2<- ggplot(df, aes(x=uvec, y=Shape)) + 
+  geom_line() +
+  geom_point()+
+  geom_errorbar(aes(ymin=Shape-ShapeErr, ymax=Shape+ShapeErr), width=.4)
+p2<-p2+labs(title="Parameter Estimate of Shape", x="Threshold", y = "Shape")
+
+ggarrange(p, p2, nrow = 2, labels = c("A", "B")) 
+```
+
+
+```{r}
+
+u_0 <- 80
+
+ExtremeValues <- GPD_S2_3_Data[GPD_S2_3_Data>u_0]
+
+df[df$ID == "a", ]
+
+FinalGPD_S2_3_DataFit <- gpd.fit(GPD_S2_3_Data, u_0)
+
+sca <- FinalGPD_S2_3_DataFit$mle[1]
+sha <- FinalGPD_S2_3_DataFit$mle[2]
+
+
+Initial_Cov <- FinalGPD_S2_3_DataFit$cov
+
+
+CI_max <- sha + 1.96*sqrt(Initial_Cov[2,2])
+CI_min <- sha - 1.96*sqrt(Initial_Cov[2,2])
+
+```
+
+```{r}
+gpd_dens = function(x, xi, sig){
+  return(1/sig*(1+xi*x/sig)^(-1/xi-1))
+}
+gpd_x = c(0:200)/10
+plot(gpd_x,gpd_dens(gpd_x, sha, sca))
+
+gpd.diag(FinalGPD_S2_3_DataFit)
+
+```
+
+```{r}
+
+quants <- jack_boot(ExtremeValues, u_0)
+clust3_s2quant <- quants[1]
+clust3_s2lowquant <- quants[2]
+clust3_s2highquant <- quants[3]
+
+```
+
+
+
+### S2 cluster 4
+
+
+```{r}
+
+GPD_S2_4_Data <- YsAmaDataS2_nona[cluster4_alocsS2,'Y']
+mrl.plot(GPD_S2_4_Data)
+
+u_0 <- 120
+
+
+
+gpd.fit(GPD_S2_4_Data, u_0)
+
+uvec = seq(from = 80, to = 120, by = 5)
+uvec
+
+ModScal <- vector(length = length(uvec))
+Shape <- vector(length = length(uvec))
+
+ModScalErr <- vector(length = length(uvec))
+ShapeErr <- vector(length = length(uvec))
+
+for(i in 1:length(uvec)){
+  GPD_S2_4_Datafit <- gpd.fit(GPD_S2_4_Data, uvec[i])
+  
+  ModScal[i] <- GPD_S2_4_Datafit$mle[1]
+  Shape[i] <- GPD_S2_4_Datafit$mle[2]
+  
+  ModScalErr[i] <- GPD_S2_4_Datafit$se[1]
+  ShapeErr[i] <- GPD_S2_4_Datafit$se[2]
+}
+
+
+df <- data.frame(uvec, ModScal, ModScalErr, Shape, ShapeErr)
+
+p<- ggplot(df, aes(x=uvec, y=ModScal)) + 
+  geom_line() +
+  geom_point()+
+  geom_errorbar(aes(ymin=ModScal-ModScalErr, ymax=ModScal+ModScalErr), width=.4)
+p<-p+labs(title="Parameter Estimate of Modified Scale", x="Threshold", y = "Modified Scale")
+
+
+p2<- ggplot(df, aes(x=uvec, y=Shape)) + 
+  geom_line() +
+  geom_point()+
+  geom_errorbar(aes(ymin=Shape-ShapeErr, ymax=Shape+ShapeErr), width=.4)
+p2<-p2+labs(title="Parameter Estimate of Shape", x="Threshold", y = "Shape")
+
+ggarrange(p, p2, nrow = 2, labels = c("A", "B")) 
+```
+
+
+```{r}
+
+u_0 <- 85
+
+ExtremeValues <- GPD_S2_4_Data[GPD_S2_4_Data>u_0]
+
+
+FinalGPD_S2_4_DataFit <- gpd.fit(GPD_S2_4_Data, u_0)
+
+sca <- FinalGPD_S2_4_DataFit$mle[1]
+sha <- FinalGPD_S2_4_DataFit$mle[2]
+
+
+Initial_Cov <- FinalGPD_S2_4_DataFit$cov
+
+
+CI_max <- sha + 1.96*sqrt(Initial_Cov[2,2])
+CI_min <- sha - 1.96*sqrt(Initial_Cov[2,2])
+
+```
+
+```{r}
+gpd_dens = function(x, xi, sig){
+  return(1/sig*(1+xi*x/sig)^(-1/xi-1))
+}
+gpd_x = c(0:200)/10
+plot(gpd_x,gpd_dens(gpd_x, sha, sca))
+
+gpd.diag(FinalGPD_S2_4_DataFit)
+
+```
+
+```{r}
+
+quants <- jack_boot(ExtremeValues, u_0)
+clust4_s2quant <- quants[1]
+clust4_s2lowquant <- quants[2]
+clust4_s2highquant <- quants[3]
+
+```
+
+
+
+### S2 cluster 5
+
+
+```{r}
+
+GPD_S2_5_Data <- YsAmaDataS2_nona[cluster5_alocsS2,'Y']
+mrl.plot(GPD_S2_5_Data)
+
+u_0 <- 110
+
+
+
+gpd.fit(GPD_S2_5_Data, u_0)
+
+uvec = seq(from = 80, to = 110, by = 5)
+uvec
+
+ModScal <- vector(length = length(uvec))
+Shape <- vector(length = length(uvec))
+
+ModScalErr <- vector(length = length(uvec))
+ShapeErr <- vector(length = length(uvec))
+
+for(i in 1:length(uvec)){
+  GPD_S2_5_Datafit <- gpd.fit(GPD_S2_5_Data, uvec[i])
+  
+  ModScal[i] <- GPD_S2_5_Datafit$mle[1]
+  Shape[i] <- GPD_S2_5_Datafit$mle[2]
+  
+  ModScalErr[i] <- GPD_S2_5_Datafit$se[1]
+  ShapeErr[i] <- GPD_S2_5_Datafit$se[2]
+}
+
+
+df <- data.frame(uvec, ModScal, ModScalErr, Shape, ShapeErr)
+
+p<- ggplot(df, aes(x=uvec, y=ModScal)) + 
+  geom_line() +
+  geom_point()+
+  geom_errorbar(aes(ymin=ModScal-ModScalErr, ymax=ModScal+ModScalErr), width=.4)
+p<-p+labs(title="Parameter Estimate of Modified Scale", x="Threshold", y = "Modified Scale")
+
+
+p2<- ggplot(df, aes(x=uvec, y=Shape)) + 
+  geom_line() +
+  geom_point()+
+  geom_errorbar(aes(ymin=Shape-ShapeErr, ymax=Shape+ShapeErr), width=.4)
+p2<-p2+labs(title="Parameter Estimate of Shape", x="Threshold", y = "Shape")
+
+ggarrange(p, p2, nrow = 2, labels = c("A", "B")) 
+```
+
+
+```{r}
+
+u_0 <- 80
+
+ExtremeValues <- GPD_S2_5_Data[GPD_S2_5_Data>u_0]
+
+df[df$ID == "a", ]
+
+FinalGPD_S2_5_DataFit <- gpd.fit(GPD_S2_5_Data, u_0)
+
+sca <- FinalGPD_S2_5_DataFit$mle[1]
+sha <- FinalGPD_S2_5_DataFit$mle[2]
+
+
+Initial_Cov <- FinalGPD_S2_5_DataFit$cov
+
+
+CI_max <- sha + 1.96*sqrt(Initial_Cov[2,2])
+CI_min <- sha - 1.96*sqrt(Initial_Cov[2,2])
+
+```
+
+```{r}
+gpd_dens = function(x, xi, sig){
+  return(1/sig*(1+xi*x/sig)^(-1/xi-1))
+}
+gpd_x = c(0:200)/10
+plot(gpd_x,gpd_dens(gpd_x, sha, sca))
+gpd.diag(FinalGPD_S2_5_DataFit)
+```
+
+```{r}
+
+quants <- jack_boot(ExtremeValues, u_0)
+clust5_s2quant <- quants[1]
+clust5_s2lowquant <- quants[2]
+clust5_s2highquant <- quants[3]
+
+```
+
+
+### Store vals
+
+```{r}
+clust_quants_S2 <- c(clust1_s2quant,clust2_s2quant,clust3_s2quant,clust4_s2quant,clust5_s2quant)
+clust_quants_S2low <- c(clust1_s2lowquant,clust2_s2lowquant,clust3_s2lowquant,clust4_s2lowquant,clust5_s2lowquant)
+clust_quants_S2high <- c(clust1_s2highquant,clust2_s2highquant,clust3_s2highquant,clust4_s2highquant,clust5_s2highquant)
+```
+
+### Final Quantile Allocations (mixture over clusters; Challenge 1 paper)
+
+```{r}
+
+target_tail <- 1e-4  # P(Y > q | X=x) = 0.0001  <=>  P(Y <= q | X=x) = 0.9999
+
+# Collect per-cluster GPD fits and raw Y data (needed to estimate zeta_u empirically)
+fits_S1 <- list(FinalGPD_S1_1_DataFit, FinalGPD_S1_2_DataFit, FinalGPD_S1_3_DataFit,
+                FinalGPD_S1_4_DataFit, FinalGPD_S1_5_DataFit)
+data_S1 <- list(GPD_S1_1_Data, GPD_S1_2_Data, GPD_S1_3_Data, GPD_S1_4_Data, GPD_S1_5_Data)
+
+fits_S2 <- list(FinalGPD_S2_1_DataFit, FinalGPD_S2_2_DataFit, FinalGPD_S2_3_DataFit,
+                FinalGPD_S2_4_DataFit, FinalGPD_S2_5_DataFit)
+data_S2 <- list(GPD_S2_1_Data, GPD_S2_2_Data, GPD_S2_3_Data, GPD_S2_4_Data, GPD_S2_5_Data)
+
+# Tail probability estimate within a cluster:
+# P(Y > q | Z=j) ≈ zeta_u_j * P(Y > q | Y > u_j, Z=j) using a fitted GPD above u_j
+cluster_tailprob <- function(q, fit, y){
+  u <- fit$threshold
+  sig <- fit$mle[1]
+  xi  <- fit$mle[2]
+  zeta_u <- mean(y > u)
+
+  if (q <= u) return(zeta_u)  # q will be extreme, so usually q > u
+
+  if (abs(xi) < 1e-10){
+    # xi -> 0 limit
+    return(zeta_u * exp(-(q - u) / sig))
+  } else {
+    inner <- 1 + xi * (q - u) / sig
+    if (inner <= 0) return(0)
+    return(zeta_u * inner^(-1/xi))
+  }
+}
+
+# Solve for q such that sum_j w_j * P(Y > q | Z=j) = target_tail
+solve_mixture_quantile <- function(weights, fits, ys, target_tail){
+  uvec <- sapply(fits, function(f) f$threshold)
+  lower <- max(uvec) + 1e-6
+
+  f <- function(q){
+    sum(sapply(1:length(fits), function(j) weights[j] * cluster_tailprob(q, fits[[j]], ys[[j]]))) - target_tail
+  }
+
+  # Find an upper bracket where f(upper) < 0
+  upper <- lower + 1
+  it <- 0
+  while (f(upper) > 0 && it < 60){
+    upper <- upper * 1.5
+    it <- it + 1
+  }
+  if (it == 60) upper <- upper + 1e4  # fallback
+
+  uniroot(f, lower = lower, upper = upper)$root
+}
+
+# Simple parametric uncertainty: simulate (sigma, xi) from asymptotic normal approx
+# and compute empirical 25%/75% of the resulting mixture quantiles.
+mixture_quantile_ci <- function(weights, fits, ys, target_tail, B = 200){
+  # point estimate
+  q_hat <- solve_mixture_quantile(weights, fits, ys, target_tail)
+
+  q_sims <- rep(NA_real_, B)
+  for (b in 1:B){
+    sim_fits <- fits
+    for (j in 1:length(fits)){
+      mu <- fits[[j]]$mle
+      V  <- fits[[j]]$cov
+      draw <- as.numeric(rmvnorm(1, mean = mu, sigma = V))
+
+      # enforce sigma > 0
+      tries <- 0
+      while (draw[1] <= 0 && tries < 50){
+        draw <- as.numeric(rmvnorm(1, mean = mu, sigma = V))
+        tries <- tries + 1
+      }
+      if (draw[1] <= 0) draw[1] <- mu[1]  # fallback
+
+      sim_fits[[j]]$mle <- draw
+    }
+
+    q_sims[b] <- tryCatch(
+      solve_mixture_quantile(weights, sim_fits, ys, target_tail),
+      error = function(e) NA_real_
+    )
+  }
+
+  q_sims <- q_sims[is.finite(q_sims)]
+  if (length(q_sims) < 10){
+    return(c(q_hat, NA_real_, NA_real_))
+  }
+
+  qs <- quantile(q_sims, probs = c(0.25, 0.75), na.rm = TRUE)
+  c(q_hat, as.numeric(qs[1]), as.numeric(qs[2]))
+}
+
+finalquantiles <- data.frame(Quantile = numeric(), Low = numeric(), High = numeric())
+
+for (i in 1:nrow(clusts)){
+  season <- clusts[i, "Season"]
+  w <- as.numeric(clusts[i, paste0("p", 1:5)])
+  w <- w / sum(w)
+
+  if (season == "S1"){
+    res <- mixture_quantile_ci(w, fits_S1, data_S1, target_tail, B = 200)
+  } else {
+    res <- mixture_quantile_ci(w, fits_S2, data_S2, target_tail, B = 200)
+  }
+
+  finalquantiles <- rbind(finalquantiles, data.frame(Quantile = res[1], Low = res[2], High = res[3]))
+}
+
+finalquantiles
+
+
+```
+
+
+```{r}
+save(finalquantiles, file = "AnswerC1.RData")
+
+```
+
+
+
