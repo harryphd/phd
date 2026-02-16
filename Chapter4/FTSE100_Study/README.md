@@ -124,9 +124,7 @@ GPDParams is initialised to the same (xi, sigma) pair for all components (curren
 
 If you want more starting components per window:
 
-initialise additional entries of `alp_tot` to non-zero
-
-and ensure corresponding entries of GPDParams are non-zero too.
+initialise additional entries of `alp_tot` to non-zero and ensure corresponding entries of GPDParams are non-zero too.
 
 ### 8) Output naming / number of FTSE runs
 In `main.py`, the FTSE script loops:
