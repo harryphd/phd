@@ -1,4 +1,4 @@
-# ED-PELT and GPD-ED-PELT (C++) — changepoint detection + CROPs comparison
+# ED-PELT and GPD-ED-PELT (C++) - changepoint detection + CROPs comparison
 
 This folder contains a small C++ implementation of:
 
